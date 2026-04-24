@@ -93,6 +93,7 @@ def cmd_add_check(args: argparse.Namespace) -> None:
 def cmd_list_checks(args: argparse.Namespace) -> None:  # noqa: ARG001
     from .config import load_settings
     from .db import get_connection, list_checks
+    from .sms_client import _mask_phone
 
     settings = load_settings()
     conn = get_connection(settings.db_path)
@@ -106,7 +107,7 @@ def cmd_list_checks(args: argparse.Namespace) -> None:  # noqa: ARG001
         for row in rows:
             print(
                 f"{row['id']:<5} {row['title']:<30} {row['due_date']:<12} "
-                f"{row['phone_number']:<16} {'yes' if row['active'] else 'no'}"
+                f"{_mask_phone(row['phone_number']):<16} {'yes' if row['active'] else 'no'}"
             )
     finally:
         conn.close()

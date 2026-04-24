@@ -15,7 +15,7 @@ from typing import Optional
 
 from .config import Settings
 from .db import list_due_reminders, mark_reminder_sent
-from .sms_client import SmsClientBase, SmsDeliveryError
+from .sms_client import SmsClientBase, SmsDeliveryError, _mask_phone
 
 logger = logging.getLogger(__name__)
 
@@ -117,15 +117,13 @@ def process_due_reminders(
     for check, offset_days, target_date_str in due_reminders:
         check_id = check["id"]
         phone = check["phone_number"]
-        masked_phone = phone[:3] + "****" + phone[-2:] if len(phone) > 4 else "****"
 
         body = build_message(check, offset_days)
         logger.info(
-            "Sending reminder: check_id=%s, offset=%s, target=%s, to=%s",
+            "Sending reminder: check_id=%s, offset=%s, target=%s",
             check_id,
             offset_days,
             target_date_str,
-            masked_phone,
         )
 
         try:

@@ -9,7 +9,7 @@ reminder_logs – one row per (check, offset, target_date) combination that has
 """
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
 
@@ -135,7 +135,6 @@ def list_due_reminders(
     for check in checks:
         due = date.fromisoformat(check["due_date"])
         for offset in offsets:
-            from datetime import timedelta
             target = due - timedelta(days=offset)
             target_str = target.isoformat()
 

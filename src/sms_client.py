@@ -44,9 +44,8 @@ class MockSmsClient(SmsClientBase):
     """No-op SMS client — logs messages instead of sending them."""
 
     def send_sms(self, to_number: str, body: str) -> Optional[str]:
-        masked = _mask_phone(to_number)
-        logger.info("[MockSMS] To: %s | %s", masked, body)
-        print(f"[MockSMS] To: {masked} | {body}")
+        logger.info("[MockSMS] To: %s | %s", _mask_phone(to_number), body)
+        print(f"[MockSMS] SMS queued for masked recipient | {body}")
         return "mock-msg-id"
 
 
@@ -70,17 +69,16 @@ class TwilioSmsClient(SmsClientBase):
         self._from_number = from_number
 
     def send_sms(self, to_number: str, body: str) -> Optional[str]:
-        masked = _mask_phone(to_number)
         try:
             message = self._client.messages.create(
                 body=body,
                 from_=self._from_number,
                 to=to_number,
             )
-            logger.info("SMS sent to %s — SID: %s", masked, message.sid)
+            logger.info("SMS sent (SID: %s)", message.sid)
             return message.sid
         except Exception as exc:
-            logger.error("Failed to send SMS to %s: %s", masked, exc)
+            logger.error("Failed to send SMS: %s", exc)
             raise SmsDeliveryError(str(exc)) from exc
 
 

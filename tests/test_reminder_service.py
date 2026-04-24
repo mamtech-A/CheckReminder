@@ -207,8 +207,9 @@ class TestIdempotency:
         client = RecordingSmsClient()
         settings = Settings(**{**default_settings.__dict__, "send_missed_reminders": True})
 
-        # First run with send_missed=True: both the 10-day (past) and 3-day (today)
-        # offsets are eligible, so 2 SMS messages are sent.
+        # First run with send_missed=True: the 10-day offset target falls 7 days in
+        # the past (a missed reminder), and the 3-day offset target is today — both
+        # are eligible, so 2 SMS messages are sent.
         process_due_reminders(mem_conn, client, today=today, settings=settings)
         first_run_count = len(client.calls)
         assert first_run_count == 2
