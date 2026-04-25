@@ -11,6 +11,7 @@ Covers:
 """
 
 import sqlite3
+import json
 from datetime import date, timedelta
 from typing import List, Optional
 from unittest.mock import patch
@@ -20,7 +21,7 @@ import pytest
 from src.config import Settings
 from src.db import add_check, get_connection, init_db, list_due_reminders, mark_reminder_sent
 from src.reminder_service import build_message, compute_days_before, process_due_reminders
-from src.sms_client import MockSmsClient, SmsDeliveryError
+from src.sms_client import MockSmsClient, SmsDeliveryError, SmsIrSmsClient, build_sms_client
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,11 @@ def default_settings() -> Settings:
         twilio_account_sid=None,
         twilio_auth_token=None,
         twilio_from_number=None,
+        smsir_api_key=None,
+        smsir_username=None,
+        smsir_line_number=None,
+        smsir_base_url="https://api.sms.ir/v1",
+        smsir_use_legacy_get=False,
         timezone="Asia/Tehran",
         sms_provider="mock",
         db_path=":memory:",
@@ -110,20 +116,104 @@ class TestBuildMessage:
     def test_message_10_days(self):
         check = self._make_check("Test Check", "2025-06-10")
         msg = build_message(check, 10)
-        assert "10 days" in msg
+        assert "10 روز مانده" in msg
         assert "Test Check" in msg
         assert "2025-06-10" in msg
 
     def test_message_3_days(self):
         check = self._make_check("Test Check", "2025-06-10")
         msg = build_message(check, 3)
-        assert "3 days" in msg
+        assert "3 روز مانده" in msg
 
     def test_message_1_day(self):
         check = self._make_check("Test Check", "2025-06-10")
         msg = build_message(check, 1)
-        assert "tomorrow" in msg
+        assert "1 روز مانده" in msg
 
+
+class TestSmsIrClient:
+    def test_build_sms_client_returns_smsir_client(self, default_settings):
+        settings = Settings(**{**default_settings.__dict__, "sms_provider": "smsir", "smsir_api_key": "key", "smsir_line_number": "1000"})
+        client = build_sms_client(settings)
+        assert isinstance(client, SmsIrSmsClient)
+
+    def test_send_sms_posts_expected_payload(self, monkeypatch):
+        captured = {}
+
+        class FakeResponse:
+            def __init__(self, payload: str):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self._payload.encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            captured["url"] = request.full_url
+            captured["headers"] = dict(request.header_items())
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return FakeResponse('{"status":1,"message":"موفق","data":{"messageId":89545112,"cost":1.0}}')
+
+        monkeypatch.setattr("src.sms_client.urlopen", fake_urlopen)
+
+        client = SmsIrSmsClient(api_key="test-api-key", line_number="3000")
+        message_id = client.send_sms("+989121234567", "Hello world")
+
+        assert captured["url"] == "https://api.sms.ir/v1/send"
+        assert captured["headers"]["X-api-key"] == "test-api-key"
+        assert captured["headers"]["Accept"] == "application/json"
+        assert captured["headers"]["Content-type"] == "application/json"
+        assert captured["body"] == {"mobile": "989121234567", "line": "3000", "text": "Hello world"}
+        assert captured["timeout"] == 30
+        assert message_id == "89545112"
+
+    def test_send_sms_legacy_get_expected_query(self, monkeypatch):
+        captured = {}
+
+        class FakeResponse:
+            def __init__(self, payload: str):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self._payload.encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            captured["url"] = request.full_url
+            captured["headers"] = dict(request.header_items())
+            captured["timeout"] = timeout
+            return FakeResponse('{"status":1,"message":"موفق","data":{"messageId":89545112,"cost":1.0}}')
+
+        monkeypatch.setattr("src.sms_client.urlopen", fake_urlopen)
+
+        client = SmsIrSmsClient(
+            api_key="test-api-key",
+            line_number="50003181890144",
+            username="9356895959",
+            use_legacy_get=True,
+        )
+        message_id = client.send_sms("09356895959", "test1")
+
+        assert captured["url"].startswith("https://api.sms.ir/v1/send?")
+        assert "username=9356895959" in captured["url"]
+        assert "password=test-api-key" in captured["url"]
+        assert "mobile=09356895959" in captured["url"]
+        assert "line=50003181890144" in captured["url"]
+        assert "text=test1" in captured["url"]
+        assert captured["headers"]["Accept"] == "text/plain"
+        assert captured["timeout"] == 30
+        assert message_id == "89545112"
 
 # ---------------------------------------------------------------------------
 # process_due_reminders — exact offset sends
@@ -145,7 +235,7 @@ class TestProcessDueReminders:
         process_due_reminders(mem_conn, client, today=today, settings=settings)
 
         assert len(client.calls) == 1
-        assert "10 days" in client.calls[0]["body"]
+        assert "10 روز مانده" in client.calls[0]["body"]
 
     def test_sends_at_3_days_before(self, mem_conn, default_settings):
         today = date(2025, 6, 1)
@@ -156,7 +246,7 @@ class TestProcessDueReminders:
         process_due_reminders(mem_conn, client, today=today, settings=settings)
 
         assert len(client.calls) == 1
-        assert "3 days" in client.calls[0]["body"]
+        assert "3 روز مانده" in client.calls[0]["body"]
 
     def test_sends_at_1_day_before(self, mem_conn, default_settings):
         today = date(2025, 6, 1)
@@ -167,7 +257,7 @@ class TestProcessDueReminders:
         process_due_reminders(mem_conn, client, today=today, settings=settings)
 
         assert len(client.calls) == 1
-        assert "tomorrow" in client.calls[0]["body"]
+        assert "1 روز مانده" in client.calls[0]["body"]
 
     def test_no_send_when_not_offset_day(self, mem_conn, default_settings):
         """No SMS should be sent when today is not an offset day."""
@@ -252,7 +342,7 @@ class TestSendMissedTrue:
 
         # The 10-day reminder (target 3 days ago) should be caught up
         sent_bodies = [c["body"] for c in client.calls]
-        assert any("10 days" in b for b in sent_bodies), f"Expected 10-day reminder; got: {sent_bodies}"
+        assert any("10 روز مانده" in b for b in sent_bodies), f"Expected 10-day reminder; got: {sent_bodies}"
 
     def test_catches_multiple_missed_offsets(self, mem_conn, default_settings):
         """All unsent past offsets are sent when send_missed=True."""
@@ -303,7 +393,7 @@ class TestSendMissedFalse:
         process_due_reminders(mem_conn, client, today=today, settings=settings)
 
         assert len(client.calls) == 1
-        assert "3 days" in client.calls[0]["body"]
+        assert "3 روز مانده" in client.calls[0]["body"]
 
 
 # ---------------------------------------------------------------------------

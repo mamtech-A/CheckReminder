@@ -7,19 +7,20 @@ Commands
   add-check   Add a new bank check record.
   list-checks List all active check records.
   run-once    Run the reminder engine once (same as the daily tick).
+    web-panel   Run a local web panel for adding and listing checks.
 
 Usage
 -----
     python -m src.cli --help
     python -m src.cli init-db
-    python -m src.cli add-check --title "Check #42" --due-date 2025-07-01 --phone +989121234567
+    python -m src.cli add-check --title "Check #42" --amount 25000000 --due-date 2025-07-01 --phone +989121234567
     python -m src.cli list-checks
     python -m src.cli run-once
+    python -m src.cli web-panel
 """
 
 import argparse
 import re
-import sys
 from datetime import date
 
 
@@ -73,6 +74,8 @@ def cmd_init_db(args: argparse.Namespace) -> None:  # noqa: ARG001
 def cmd_add_check(args: argparse.Namespace) -> None:
     from .config import load_settings
     from .db import add_check, get_connection, init_db
+    from .reminder_service import build_added_check_message
+    from .sms_client import SmsDeliveryError, build_sms_client
 
     settings = load_settings()
     conn = get_connection(settings.db_path)
@@ -83,9 +86,23 @@ def cmd_add_check(args: argparse.Namespace) -> None:
             title=args.title,
             due_date=args.due_date,
             phone_number=args.phone,
+            amount=args.amount,
             description=args.description or "",
         )
         print(f"Check added with id={check_id}: {args.title!r} due {args.due_date}")
+
+        # Send a confirmation SMS immediately when a check is added.
+        sms_client = build_sms_client(settings)
+        immediate_body = build_added_check_message(
+            title=args.title,
+            amount=args.amount,
+            due_date=args.due_date,
+        )
+        try:
+            message_id = sms_client.send_sms(args.phone, immediate_body)
+            print(f"Immediate SMS sent successfully. message_id={message_id}")
+        except SmsDeliveryError as exc:
+            print(f"Check added, but immediate SMS failed: {exc}")
     finally:
         conn.close()
 
@@ -118,6 +135,12 @@ def cmd_run_once(args: argparse.Namespace) -> None:  # noqa: ARG001
     run_daily_tick()
 
 
+def cmd_web_panel(args: argparse.Namespace) -> None:
+    from .web_panel import run_web_panel
+
+    run_web_panel(host=args.host, port=args.port, debug=args.debug)
+
+
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -148,6 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_validate_phone,
         help="Recipient phone number in E.164 format, e.g. +989121234567",
     )
+    p_add.add_argument("--amount", default="", help="Check amount")
     p_add.add_argument("--description", default="", help="Optional description")
 
     # list-checks
@@ -156,6 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # run-once
     sub.add_parser("run-once", help="Run the reminder engine for today")
+
+    # web-panel
+    p_web = sub.add_parser("web-panel", help="Run local web panel for checks")
+    p_web.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
+    p_web.add_argument("--port", type=int, default=5000, help="Port to listen on")
+    p_web.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
 
     return parser
 
@@ -169,6 +199,7 @@ def main(argv=None) -> None:
         "add-check": cmd_add_check,
         "list-checks": cmd_list_checks,
         "run-once": cmd_run_once,
+        "web-panel": cmd_web_panel,
     }
     commands[args.command](args)
 

@@ -19,6 +19,11 @@ from .sms_client import SmsClientBase, SmsDeliveryError, _mask_phone
 
 logger = logging.getLogger(__name__)
 
+try:
+    import jdatetime
+except ImportError:  # pragma: no cover - optional dependency fallback
+    jdatetime = None
+
 
 # ---------------------------------------------------------------------------
 # Date helpers
@@ -52,15 +57,21 @@ def build_message(check: sqlite3.Row, offset_days: int) -> str:
     """
     title = check["title"]
     due_date = check["due_date"]
-
-    if offset_days == 1:
-        timing = "tomorrow"
-    else:
-        timing = f"in {offset_days} days"
+    amount = check["amount"] if "amount" in check.keys() else ""
 
     return (
-        f"Reminder: Check '{title}' is due {timing} on {due_date}. "
-        f"Please ensure funds are available."
+        f"{offset_days} روز مانده به تاریخ سررسید چک "
+        f"{title}\n"
+        f"تاریخ سر رسید: {_format_display_date(due_date)}\n"
+        f"مبلغ: {amount or '-'}"
+    )
+
+
+def build_added_check_message(title: str, amount: str, due_date: str) -> str:
+    """Build SMS body sent immediately after a check is registered."""
+    return (
+        f"چک {title} به مبلغ {amount or '-'} "
+        f"با تاریخ سر رسید {_format_display_date(due_date)} برای یاد اوری ثبت شد."
     )
 
 
@@ -175,3 +186,12 @@ def _local_today(settings: Optional[Settings] = None) -> date:
     except (ImportError, Exception):
         # Fallback to system local time
         return date.today()
+
+
+def _format_display_date(value: str) -> str:
+    """Render an ISO date as Jalali when possible."""
+    if jdatetime is None:
+        return value
+
+    gregorian_date = date.fromisoformat(value)
+    return jdatetime.date.fromgregorian(date=gregorian_date).strftime("%Y/%m/%d")

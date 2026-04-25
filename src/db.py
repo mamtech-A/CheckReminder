@@ -25,6 +25,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             title        TEXT    NOT NULL,
             description  TEXT,
+            amount       TEXT    NOT NULL DEFAULT '',
             due_date     TEXT    NOT NULL,  -- YYYY-MM-DD
             phone_number TEXT    NOT NULL,
             active       INTEGER NOT NULL DEFAULT 1,
@@ -44,6 +45,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+    # Lightweight migration for existing databases created before `amount` existed.
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(checks)").fetchall()}
+    if "amount" not in existing_columns:
+        conn.execute("ALTER TABLE checks ADD COLUMN amount TEXT NOT NULL DEFAULT ''")
+
     conn.commit()
 
 
@@ -56,6 +63,7 @@ def add_check(
     title: str,
     due_date: str,
     phone_number: str,
+    amount: str = "",
     description: str = "",
 ) -> int:
     """
@@ -70,10 +78,10 @@ def add_check(
     """
     cur = conn.execute(
         """
-        INSERT INTO checks (title, description, due_date, phone_number)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO checks (title, description, amount, due_date, phone_number)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (title, description, due_date, phone_number),
+        (title, description, amount, due_date, phone_number),
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
@@ -86,6 +94,39 @@ def list_checks(conn: sqlite3.Connection, active_only: bool = True) -> List[sqli
             "SELECT * FROM checks WHERE active = 1 ORDER BY due_date"
         ).fetchall()
     return conn.execute("SELECT * FROM checks ORDER BY due_date").fetchall()
+
+
+def get_check(conn: sqlite3.Connection, check_id: int) -> Optional[sqlite3.Row]:
+    """Return a single check by id, or None if it does not exist."""
+    return conn.execute("SELECT * FROM checks WHERE id = ?", (check_id,)).fetchone()
+
+
+def update_check(
+    conn: sqlite3.Connection,
+    check_id: int,
+    title: str,
+    due_date: str,
+    phone_number: str,
+    amount: str = "",
+    description: str = "",
+) -> None:
+    """Update an existing check record."""
+    conn.execute(
+        """
+        UPDATE checks
+        SET title = ?, description = ?, amount = ?, due_date = ?, phone_number = ?
+        WHERE id = ?
+        """,
+        (title, description, amount, due_date, phone_number, check_id),
+    )
+    conn.commit()
+
+
+def delete_check(conn: sqlite3.Connection, check_id: int) -> None:
+    """Delete a check and its reminder logs."""
+    conn.execute("DELETE FROM reminder_logs WHERE check_id = ?", (check_id,))
+    conn.execute("DELETE FROM checks WHERE id = ?", (check_id,))
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------

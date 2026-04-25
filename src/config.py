@@ -20,6 +20,11 @@ class Settings:
     twilio_account_sid: Optional[str]
     twilio_auth_token: Optional[str]
     twilio_from_number: Optional[str]
+    smsir_api_key: Optional[str]
+    smsir_username: Optional[str]
+    smsir_line_number: Optional[str]
+    smsir_base_url: str
+    smsir_use_legacy_get: bool
     timezone: str
     sms_provider: str
     db_path: str
@@ -31,11 +36,18 @@ def load_settings() -> Settings:
     """Read all configuration from environment variables with sensible defaults."""
     send_missed_raw = os.environ.get("SEND_MISSED_REMINDERS", "true").strip().lower()
     send_missed = send_missed_raw in ("1", "true", "yes")
+    smsir_legacy_raw = os.environ.get("SMSIR_USE_LEGACY_GET", "false").strip().lower()
+    smsir_use_legacy_get = smsir_legacy_raw in ("1", "true", "yes")
 
     return Settings(
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN"),
         twilio_from_number=os.environ.get("TWILIO_FROM_NUMBER"),
+        smsir_api_key=os.environ.get("SMSIR_API_KEY"),
+        smsir_username=os.environ.get("SMSIR_USERNAME"),
+        smsir_line_number=os.environ.get("SMSIR_LINE_NUMBER"),
+        smsir_base_url=os.environ.get("SMSIR_BASE_URL", "https://api.sms.ir/v1"),
+        smsir_use_legacy_get=smsir_use_legacy_get,
         timezone=os.environ.get("TIMEZONE", "Asia/Tehran"),
         sms_provider=os.environ.get("SMS_PROVIDER", "mock").strip().lower(),
         db_path=os.environ.get("DB_PATH", "checkreminder.db"),
@@ -47,7 +59,7 @@ def validate_settings(settings: Settings) -> None:
     """
     Raise ValueError if required settings are missing or invalid.
 
-    Only validates Twilio credentials when sms_provider is 'twilio'.
+    Only validates provider-specific credentials when a non-mock provider is selected.
     """
     if not settings.timezone:
         raise ValueError("TIMEZONE must not be empty.")
@@ -64,9 +76,9 @@ def validate_settings(settings: Settings) -> None:
         except Exception:
             raise ValueError(f"Unknown timezone: {settings.timezone!r}")
 
-    if settings.sms_provider not in ("twilio", "mock"):
+    if settings.sms_provider not in ("twilio", "smsir", "mock"):
         raise ValueError(
-            f"SMS_PROVIDER must be 'twilio' or 'mock', got: {settings.sms_provider!r}"
+            f"SMS_PROVIDER must be 'twilio', 'smsir' or 'mock', got: {settings.sms_provider!r}"
         )
 
     if settings.sms_provider == "twilio":
@@ -80,4 +92,17 @@ def validate_settings(settings: Settings) -> None:
         if missing:
             raise ValueError(
                 f"Twilio provider requires these env vars: {', '.join(missing)}"
+            )
+
+    if settings.sms_provider == "smsir":
+        missing = []
+        if not settings.smsir_api_key:
+            missing.append("SMSIR_API_KEY")
+        if not settings.smsir_line_number:
+            missing.append("SMSIR_LINE_NUMBER")
+        if settings.smsir_use_legacy_get and not settings.smsir_username:
+            missing.append("SMSIR_USERNAME")
+        if missing:
+            raise ValueError(
+                f"SMS.ir provider requires these env vars: {', '.join(missing)}"
             )
